@@ -4,6 +4,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 
+def default_dict(pairs):
+    mapping = default_dict(list)
+    for key, val in pairs:
+        mapping[key].append(val)
+
+
 def read_file(file_path: Path) -> str:
     with open(file_path) as text_file:
         return text_file.read()
@@ -18,16 +24,21 @@ def read_multiline(file_path: Path) -> List[str]:
     return lines
 
 
-def read_csv(file_path: Path) -> List[List[str]]:
+def read_csv(file_path: Path, discard_header: bool = True) -> List[List[str]]:
     lines = read_multiline(file_path)
-    table = list(map(methodcaller("split", ","), lines))
-    return table
+    table = map(methodcaller("split", ","), lines)
+    if discard_header:
+        next(table)
+    return list(table)
 
 
 def csv_to_dict(
-    file_path: Path, key_col: int = 0, value_col: int = 1
+    file_path: Path,
+    key_col: int = 0,
+    value_col: int = 1,
+    discard_header: bool = True,
 ) -> Dict[str, str]:
-    table = read_csv(file_path)
+    table = read_csv(file_path, discard_header)
     return dict(map(itemgetter(key_col, value_col), table))
 
 
@@ -35,10 +46,11 @@ def multicolumn_csv_to_dict(
     file_path: Path,
     key_cols: Sequence = (0,),
     value_cols: Optional[Sequence] = None,
+    discard_header: bool = True,
 ) -> Dict[str, Tuple[str]]:
-    table = read_csv(file_path)
+    table = read_csv(file_path, discard_header)
     if not value_cols:
-        value_cols = tuple(i for i in range(1, len(table[0]) - 1))
+        value_cols = tuple(i for i in range(1, len(table[0])))
     key_columns = map(itemgetter(*key_cols), table)
     value_columns = map(itemgetter(*value_cols), table)
     return dict(zip(key_columns, value_columns))
