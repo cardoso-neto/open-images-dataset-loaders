@@ -82,7 +82,7 @@ class OpenImagesObjects(Dataset):
             )
         )
         self.box_labels = multicolumn_csv_to_dict(
-            bbox_csv_filepath, value_cols=indices
+            bbox_csv_filepath, value_cols=indices, one_to_n_mapping=True
         )
         current_split = set(self.box_labels.keys())
         self.images = [
@@ -105,6 +105,12 @@ class OpenImagesObjects(Dataset):
     def __len__(self) -> int:
         return len(self.images)
 
+    def prep_labels(self, labels):
+        obj_label, *bbox = labels
+        obj_id = torch.tensor(self.label_name_to_id[obj_label])
+        bbox = torch.tensor(list(map(float, bbox)))
+        return (obj_id, bbox)
+
     def __getitem__(self, index: int):
         image_path = self.images[index]
         image = Image.open(image_path)
@@ -113,10 +119,11 @@ class OpenImagesObjects(Dataset):
         if self.transform:
             image = self.transform(image)
         labels = self.box_labels[image_path.stem]
-        obj_label, *bbox = labels
-        obj_id = torch.tensor(self.label_name_to_id[obj_label])
-        bbox = torch.tensor(list(map(float, bbox)))
-        return image, (obj_id, bbox)
+        labels = list(map(self.prep_labels, labels))
+        return image, labels
+
+    # def __get_stats(self):
+
 
 
 class OpenImagesRelationships(Dataset):
@@ -152,7 +159,7 @@ class OpenImagesRelationships(Dataset):
                 "annotations", "relationships", f"{split}-annotations-vrd.csv"
             )
         self.images_to_relationships = multicolumn_csv_to_dict(
-            vrd_csv_filepath
+            vrd_csv_filepath, one_to_n_mapping=True
         )
         current_split = set(self.images_to_relationships.keys())
         self.images = [
@@ -191,6 +198,7 @@ class OpenImagesRelationships(Dataset):
         )
 
     def get_stats(self):
+        # TODO: this is used to work before the switch to defaultdict(list)
         stats = {
             "relationship_types": len(self.relationship_names_to_id),
             "unique_subjects": len(
@@ -215,6 +223,7 @@ class OpenImagesRelationships(Dataset):
         return stats
 
     def get_readable_labels(self):
+        # TODO: this is used to work before the switch to defaultdict(list)
         unique_subjects = set(
             map(
                 itemgetter(VRD_INDICES["LabelName1"] - 1),
@@ -244,6 +253,16 @@ class OpenImagesRelationships(Dataset):
     def __len__(self) -> int:
         return len(self.images)
 
+    def prep_labels(self, labels):
+        obj_1, obj_2, *bboxes, relationship_name = labels
+        obj_id_1 = torch.tensor(self.label_name_to_id[obj_1])
+        obj_id_2 = torch.tensor(self.label_name_to_id[obj_2])
+        bboxes = torch.tensor(list(map(float, bboxes)))
+        bbox_1, bbox_2 = bboxes[:4], bboxes[4:]
+        relationship_id = self.relationship_names_to_id[relationship_name]
+        relationship_id = torch.tensor(relationship_id)
+        return (obj_id_1, obj_id_2, bbox_1, bbox_2, relationship_id)
+
     def __getitem__(self, index: int):
         image_path = self.images[index]
         image = Image.open(image_path)
@@ -252,20 +271,12 @@ class OpenImagesRelationships(Dataset):
         if self.transform:
             image = self.transform(image)
         labels = self.images_to_relationships[image_path.stem]
-        obj_1, obj_2, *bboxes, relationship_name = labels
-        obj_id_1 = torch.tensor(self.label_name_to_id[obj_1])
-        obj_id_2 = torch.tensor(self.label_name_to_id[obj_2])
-        bboxes = torch.tensor(list(map(float, bboxes)))
-        bbox_1, bbox_2 = labels[:4], labels[4:]
-        relationship_id = self.relationship_names_to_id[relationship_name]
-        relationship_id = torch.tensor(relationship_id)
-        return image, (obj_id_1, obj_id_2, bbox_1, bbox_2, relationship_id)
+        labels = list(map(self.prep_labels, labels))
+        return image, labels
 
 
 if __name__ == "__main__":
-    # a = OpenImagesObjects(Path("../../open-images"))
-    # print(a[10])
+    a = OpenImagesObjects(Path("../../open-images"))
+    print(a[10])
     a = OpenImagesRelationships(Path("../../open-images"), "test")
-    print(a.get_stats())
-    print(a.get_readable_labels())
-    # print([a[i] for i in range(10)])
+    print([a[i] for i in range(100)])
