@@ -1,4 +1,5 @@
 
+from itertools import chain
 from operator import attrgetter, contains, itemgetter
 from pathlib import Path
 from typing import Callable
@@ -58,7 +59,7 @@ class OpenImagesObjects(Dataset):
         transform: Callable = None,
     ):
         """
-        [summary]
+        Object Detection dataset.
 
         [extended_summary]
 
@@ -68,7 +69,16 @@ class OpenImagesObjects(Dataset):
         """
         super().__init__()
         self.transform = transform
-        images_folder = root_folder / "images" / split
+        images_folder = root_folder / "images"
+        if split == "train":
+            all_folders = images_folder.glob(f"{split}_0" + r"[0-9]")
+            all_images = chain(
+                *[folder.glob(r"*.jpg") for folder in all_folders]
+            )
+        else:
+            images_folder /= split
+            all_images = images_folder.glob(r"*.jpg")
+
         bbox_csv_filepath = root_folder.joinpath(
             "annotations", "boxes", f"{split}-annotations-bbox.csv"
         )
@@ -84,11 +94,12 @@ class OpenImagesObjects(Dataset):
         self.box_labels = multicolumn_csv_to_dict(
             bbox_csv_filepath, value_cols=indices, one_to_n_mapping=True
         )
-        current_split = set(self.box_labels.keys())
+        images_with_labels = set(self.box_labels.keys())
         self.images = [
-            image_path for image_path in images_folder.glob(r"*.jpg")
-            if image_path.stem in current_split
+            image_path for image_path in all_images
+            if image_path.stem in images_with_labels
         ]
+
         self.label_name_to_class_description = csv_to_dict(
             root_folder.joinpath(
                 "annotations", "metadata", "class-descriptions-boxable.csv"
@@ -122,9 +133,6 @@ class OpenImagesObjects(Dataset):
         labels = list(map(self.prep_labels, labels))
         return image, labels
 
-    # def __get_stats(self):
-
-
 
 class OpenImagesRelationships(Dataset):
     def __init__(
@@ -138,32 +146,36 @@ class OpenImagesRelationships(Dataset):
 
         [extended_summary]
 
-        :param Dataset:
         :param root_folder:
         :param split:
         :param transform:
         """
         super().__init__()
         self.transform = transform
-        images_folder = root_folder / "images" / split
         metadata_folder = root_folder / "annotations" / "metadata"
 
+        images_folder = root_folder / "images"
         if split == "train":
-            vrd_csv_filepath = root_folder.joinpath(
-                "annotations",
-                "relationships",
-                f"challenge-2018-{split}-vrd.csv",
+            all_folders = images_folder.glob(f"{split}_0" + r"[0-9]")
+            all_images = chain(
+                *[folder.glob(r"*.jpg") for folder in all_folders]
             )
         else:
-            vrd_csv_filepath = root_folder.joinpath(
-                "annotations", "relationships", f"{split}-annotations-vrd.csv"
-            )
+            img_folder = images_folder / split
+            all_images = img_folder.glob(r"*.jpg")
+
+        vrd_csv_filepath = root_folder / "annotations" / "relationships"
+        if split == "train":
+            vrd_csv_filepath /= f"challenge-2018-{split}-vrd.csv"
+        else:
+            vrd_csv_filepath /= f"{split}-annotations-vrd.csv"
+
         self.images_to_relationships = multicolumn_csv_to_dict(
             vrd_csv_filepath, one_to_n_mapping=True
         )
         current_split = set(self.images_to_relationships.keys())
         self.images = [
-            image_path for image_path in images_folder.glob(r"*.jpg")
+            image_path for image_path in all_images
             if image_path.stem in current_split
         ]
 
@@ -276,7 +288,7 @@ class OpenImagesRelationships(Dataset):
 
 
 if __name__ == "__main__":
-    a = OpenImagesObjects(Path("../../open-images"))
-    print(a[10])
-    a = OpenImagesRelationships(Path("../../open-images"), "test")
-    print([a[i] for i in range(100)])
+    # a = OpenImagesObjects(Path("../../open-images"), split="train")
+    # print([a[i] for i in range(10)])
+    a = OpenImagesRelationships(Path("../../open-images"), split="train")
+    print([a[i] for i in range(10)])
