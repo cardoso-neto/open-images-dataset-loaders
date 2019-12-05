@@ -42,6 +42,7 @@ def read_multiline(file_path: Path) -> List[str]:
 def read_csv(file_path: Path, discard_header: bool = True) -> List[List[str]]:
     lines = read_multiline(file_path)
     print(file_path, len(lines))
+    # [x.split(',') for x in lines]
     table = map(methodcaller("split", ","), lines)
     if discard_header:
         next(table)
@@ -56,6 +57,7 @@ def csv_to_dict(
     one_to_n_mapping: bool = False,
 ) -> Union[Dict[str, str], DefaultDict[str, str]]:
     table = read_csv(file_path, discard_header)
+    # ((line[key_col], line[value_col]) for line in table)
     pairs = map(itemgetter(key_col, value_col), table)
     if one_to_n_mapping:
         return default_dict(pairs)
@@ -73,6 +75,7 @@ def multicolumn_csv_to_dict(
     table = read_csv(file_path, discard_header)
     if not value_cols:
         value_cols = tuple(i for i in range(1, len(table[0])))
+    # (tuple(line[i] for i in key_cols) for line in table)
     key_columns = map(itemgetter(*key_cols), table)
     value_columns = map(itemgetter(*value_cols), table)
     pairs = zip(key_columns, value_columns)
