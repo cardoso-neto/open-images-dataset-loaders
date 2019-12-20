@@ -35,7 +35,7 @@ TRIPLETS_INDICES = {
 }
 
 
-class OpenImagesRelationships(Dataset):
+class ImageAndRelationships(Dataset):
     def __init__(
         self,
         root_folder: Path,
@@ -188,6 +188,115 @@ class OpenImagesRelationships(Dataset):
         return image, labels
 
 
+class Relationships(Dataset):
+    def __init__(
+        self,
+        root_folder: Path,
+        split: str = "validation",
+        transform: Callable = None,
+    ):
+        """
+        Visual Relationship Detection dataset.
+
+        [extended_summary]
+
+        :param root_folder:
+        :param split:
+        :param transform:
+        """
+        super().__init__()
+        self.transform = transform
+        metadata_folder = root_folder / "annotations" / "metadata"
+
+        images_folder = root_folder / "images"
+        if split == "train":
+            all_folders = images_folder.glob(f"{split}_*")
+            print(*all_folders)
+            exit()
+            all_images = chain(
+                *[folder.glob(r"*.jpg") for folder in all_folders]
+            )
+        else:
+            img_folder = images_folder / split
+            all_images = img_folder.glob(r"*.jpg")
+
+        vrd_csv_filepath = root_folder / "annotations" / "relationships"
+        if split == "train":
+            vrd_csv_filepath /= f"challenge-2018-{split}-vrd.csv"
+        else:
+            vrd_csv_filepath /= f"{split}-annotations-vrd.csv"
+
+        self.instances = read_csv(vrd_csv_filepath)
+
+        current_split = set(
+            map(
+                itemgetter(VRD_INDICES["ImageID"]),
+                self.instances,
+            )
+        )
+
+        self.image_paths = {
+            image_path.stem: image_path for image_path in all_images
+            if image_path.stem in current_split
+        }
+
+        self.label_name_to_class_description = csv_to_dict(
+            metadata_folder / "class-descriptions-boxable.csv",
+            discard_header=False,
+        )
+        self.label_name_to_class_description_extension = csv_to_dict(
+            metadata_folder / "challenge-2018-attributes-description.csv",
+            discard_header=False,
+        )
+        self.label_name_to_class_description.update(
+            self.label_name_to_class_description_extension
+        )
+
+        self.label_name_to_id = bidict(
+            zip(
+                self.label_name_to_class_description.keys(),
+                range(len(self.label_name_to_class_description.keys())),
+            )
+        )
+        triplets = read_csv(
+            metadata_folder / "challenge-2018-relationship-triplets.csv"
+        )
+        relationship_names = sorted(
+            set(
+                map(itemgetter(TRIPLETS_INDICES["relationship"]), triplets)
+            )
+        )
+        self.relationship_names_to_id = bidict(
+            zip(relationship_names, range(len(relationship_names)))
+        )
+
+    def __len__(self) -> int:
+        return len(self.images)
+
+    def prep_labels(self, labels):
+        obj_1, obj_2, *bboxes, relationship_name = labels
+        obj_id_1 = torch.tensor(self.label_name_to_id[obj_1])
+        obj_id_2 = torch.tensor(self.label_name_to_id[obj_2])
+        bboxes = torch.tensor(list(map(float, bboxes)))
+        bbox_1, bbox_2 = bboxes[:4], bboxes[4:]
+        relationship_id = self.relationship_names_to_id[relationship_name]
+        relationship_id = torch.tensor(relationship_id)
+        return (obj_id_1, obj_id_2, bbox_1, bbox_2, relationship_id)
+
+    def __getitem__(self, index: int):
+        instance, *labels = self.instances[index]
+        image_path = self.image_paths[instance]
+        image = Image.open(image_path)
+        if image.mode != "RGB":
+            image.convert("RGB")
+        if self.transform:
+            image = self.transform(image)
+        labels = self.prep_labels(labels)
+        return image, labels
+
+
 if __name__ == "__main__":
-    a = OpenImagesRelationships(Path("../../open-images"), split="test")
+    a = ImageAndRelationships(Path("../../open-images"), split="test")
+    print([a[i] for i in range(10)])
+    a = Relationships(Path("../../open-images"), split="train")
     print([a[i] for i in range(10)])
