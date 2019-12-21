@@ -176,16 +176,58 @@ class ImageAndRelationships(Dataset):
         relationship_id = torch.tensor(relationship_id)
         return (obj_id_1, obj_id_2, bbox_1, bbox_2, relationship_id)
 
+    def prep_images(self, image, labels):
+        # TODO: fix crops on wrongs dims
+        sub = []
+        obj = []
+        comb = []
+
+        for label in labels:
+            bbox_sub = label[2]
+            sub.append(
+                image[
+                    bbox_sub[0]:bbox_sub[1],
+                    bbox_sub[2]:bbox_sub[3],
+                ]
+            )
+
+            bbox_obj = label[3]
+            obj.append(
+                image[
+                    bbox_obj[0]:bbox_obj[1],
+                    bbox_obj[2]:bbox_obj[3],
+                ]
+            )
+
+            bbox_comb = [
+                min(bbox_sub[0], bbox_obj[0]),
+                max(bbox_sub[1], bbox_obj[1]),
+                min(bbox_sub[3], bbox_obj[3]),
+                max(bbox_sub[4], bbox_obj[4]),
+            ]
+            comb.append(
+                image[
+                    bbox_comb[0]:bbox_comb[1],
+                    bbox_comb[2]:bbox_comb[3],
+                ]
+            )
+
+        return sub, obj, comb
+
     def __getitem__(self, index: int):
-        image_path = self.images[index]
+        instance, *labels = self.instances[index]
+        image_path = self.image_paths[instance]
         image = Image.open(image_path)
         if image.mode != "RGB":
             image.convert("RGB")
+        labels = self.prep_labels(labels)
+
+        crops = prep_images(image, labels)
+
         if self.transform:
-            image = self.transform(image)
-        labels = self.images_to_relationships[image_path.stem]
-        labels = list(map(self.prep_labels, labels))
-        return image, labels
+            crops = self.transform(crops)
+
+        return crops, labels[:, -1]
 
 
 class Relationships(Dataset):
@@ -284,71 +326,57 @@ class Relationships(Dataset):
         return (obj_id_1, obj_id_2, bbox_1, bbox_2, relationship_id)
 
     def prep_images(self, image, labels):
-        sub = []
-        obj = []
-        comb = []
+        # TODO: crop images using PIL to avoid conversion to np.ndarray
+        h, w = image.shape[:2]
 
-        for label in labels:
-            bbox_sub = label[2]
-            sub.append(
-                image[
-                    bbox_sub[0]:bbox_sub[1],
-                    bbox_sub[2]:bbox_sub[3],
-                ]
-            )
+        bbox_sub = (labels[2] * torch.tensor([w, w, h, h])).int()
+        sub = image[
+            bbox_sub[2]:bbox_sub[3],
+            bbox_sub[0]:bbox_sub[1],
+        ]
 
-            bbox_obj = label[3]
-            obj.append(
-                image[
-                    bbox_obj[0]:bbox_obj[1],
-                    bbox_obj[2]:bbox_obj[3],
-                ]
-            )
+        bbox_obj = (labels[3] * torch.tensor([w, w, h, h])).int()
+        obj = image[
+            bbox_obj[2]:bbox_obj[3],
+            bbox_obj[0]:bbox_obj[1],
+        ]
 
-            bbox_comb = [
-                min(bbox_sub[0], bbox_obj[0]),
-                max(bbox_sub[1], bbox_obj[1]),
-                min(bbox_sub[3], bbox_obj[3]),
-                max(bbox_sub[4], bbox_obj[4]),
-            ]
-            comb.append(
-                image[
-                    bbox_comb[0]:bbox_comb[1],
-                    bbox_comb[2]:bbox_comb[3],
-                ]
-            )
+        bbox_comb = [
+            min(bbox_sub[0], bbox_obj[0]),
+            max(bbox_sub[1], bbox_obj[1]),
+            min(bbox_sub[2], bbox_obj[2]),
+            max(bbox_sub[3], bbox_obj[3]),
+        ]
+        comb = image[
+            bbox_comb[2]:bbox_comb[3],
+            bbox_comb[0]:bbox_comb[1],
+        ]
 
-        return sub, obj, comb
+        sub = Image.fromarray(sub)
+        obj = Image.fromarray(obj)
+        comb = Image.fromarray(comb)
+
+        crops = (sub, obj, comb)
+        return crops
 
     def __getitem__(self, index: int):
         instance, *labels = self.instances[index]
         image_path = self.image_paths[instance]
         image = Image.open(image_path)
         if image.mode != "RGB":
-            image.convert("RGB")
+            image = image.convert("RGB")
         labels = self.prep_labels(labels)
 
-        crops = prep_images(image, labels)
-
+        image = np.asarray(image)
+        crops = self.prep_images(image, labels)
         if self.transform:
-            crops = self.transform(crops)
+            crops = tuple(self.transform(x) for x in crops)
 
-        return crops, labels[:, -1]
-
-    def __getitem__(self, index: int):
-        instance, *labels = self.instances[index]
-        image_path = self.image_paths[instance]
-        image = Image.open(image_path)
-        if image.mode != "RGB":
-            image.convert("RGB")
-        if self.transform:
-            image = self.transform(image)
-        labels = self.prep_labels(labels)
-        return image, labels
+        return crops, (labels[0], labels[1], labels[-1])
 
 
 if __name__ == "__main__":
     a = ImageAndRelationships(Path("../../open-images"), split="test")
     print([a[i] for i in range(10)])
-    a = Relationships(Path("../../open-images"), split="train")
+    a = Relationships(Path("../../open-images"), split="test")
     print([a[i] for i in range(10)])
