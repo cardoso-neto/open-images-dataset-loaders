@@ -271,7 +271,7 @@ class Relationships(Dataset):
         )
 
     def __len__(self) -> int:
-        return len(self.images)
+        return len(self.instances)
 
     def prep_labels(self, labels):
         obj_1, obj_2, *bboxes, relationship_name = labels
@@ -282,6 +282,58 @@ class Relationships(Dataset):
         relationship_id = self.relationship_names_to_id[relationship_name]
         relationship_id = torch.tensor(relationship_id)
         return (obj_id_1, obj_id_2, bbox_1, bbox_2, relationship_id)
+
+    def prep_images(self, image, labels):
+        sub = []
+        obj = []
+        comb = []
+
+        for label in labels:
+            bbox_sub = label[2]
+            sub.append(
+                image[
+                    bbox_sub[0]:bbox_sub[1],
+                    bbox_sub[2]:bbox_sub[3],
+                ]
+            )
+
+            bbox_obj = label[3]
+            obj.append(
+                image[
+                    bbox_obj[0]:bbox_obj[1],
+                    bbox_obj[2]:bbox_obj[3],
+                ]
+            )
+
+            bbox_comb = [
+                min(bbox_sub[0], bbox_obj[0]),
+                max(bbox_sub[1], bbox_obj[1]),
+                min(bbox_sub[3], bbox_obj[3]),
+                max(bbox_sub[4], bbox_obj[4]),
+            ]
+            comb.append(
+                image[
+                    bbox_comb[0]:bbox_comb[1],
+                    bbox_comb[2]:bbox_comb[3],
+                ]
+            )
+
+        return sub, obj, comb
+
+    def __getitem__(self, index: int):
+        instance, *labels = self.instances[index]
+        image_path = self.image_paths[instance]
+        image = Image.open(image_path)
+        if image.mode != "RGB":
+            image.convert("RGB")
+        labels = self.prep_labels(labels)
+
+        crops = prep_images(image, labels)
+
+        if self.transform:
+            crops = self.transform(crops)
+
+        return crops, labels[:, -1]
 
     def __getitem__(self, index: int):
         instance, *labels = self.instances[index]
