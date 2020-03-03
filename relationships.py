@@ -2,15 +2,21 @@
 from itertools import chain
 from operator import attrgetter, contains, itemgetter
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Tuple
 
+import numpy as np
 import torch
 from bidict import bidict
 from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
 
-from utils import csv_to_dict, multicolumn_csv_to_dict, read_csv
+from .utils import (
+    csv_to_dict,
+    invert_mapping,
+    multicolumn_csv_to_dict,
+    read_csv,
+)
 
 
 VRD_INDICES = {
@@ -253,14 +259,12 @@ class Relationships(Dataset):
         images_folder = root_folder / "images"
         if split == "train":
             all_folders = images_folder.glob(f"{split}_*")
-            print(*all_folders)
-            exit()
-            all_images = chain(
+            all_images = set(chain(
                 *[folder.glob(r"*.jpg") for folder in all_folders]
-            )
+            ))
         else:
             img_folder = images_folder / split
-            all_images = img_folder.glob(r"*.jpg")
+            all_images = set(img_folder.glob(r"*.jpg"))
 
         vrd_csv_filepath = root_folder / "annotations" / "relationships"
         if split == "train":
@@ -270,16 +274,16 @@ class Relationships(Dataset):
 
         self.instances = read_csv(vrd_csv_filepath)
 
-        current_split = set(
-            map(
-                itemgetter(VRD_INDICES["ImageID"]),
-                self.instances,
-            )
-        )
+
+        # make sure split contains only images that are available on disk
+        images_on_disk = {image_path.stem for image_path in all_images}
+        self.instances = [
+            x for x in self.instances
+            if x[VRD_INDICES["ImageID"]] in images_on_disk
+        ]
 
         self.image_paths = {
             image_path.stem: image_path for image_path in all_images
-            if image_path.stem in current_split
         }
 
         self.label_name_to_class_description = csv_to_dict(
@@ -294,12 +298,14 @@ class Relationships(Dataset):
             self.label_name_to_class_description_extension
         )
 
-        self.label_name_to_id = bidict(
+        self.label_name_to_id = dict(
             zip(
                 self.label_name_to_class_description.keys(),
                 range(len(self.label_name_to_class_description.keys())),
             )
         )
+        self.id_to_label_name = invert_mapping(self.label_name_to_id)
+
         triplets = read_csv(
             metadata_folder / "challenge-2018-relationship-triplets.csv"
         )
@@ -308,22 +314,77 @@ class Relationships(Dataset):
                 map(itemgetter(TRIPLETS_INDICES["relationship"]), triplets)
             )
         )
-        self.relationship_names_to_id = bidict(
+        self.relationship_names_to_id = dict(
             zip(relationship_names, range(len(relationship_names)))
+        )
+        self.id_to_relationship_names = invert_mapping(
+            self.relationship_names_to_id
         )
 
     def __len__(self) -> int:
         return len(self.instances)
 
     def prep_labels(self, labels):
-        obj_1, obj_2, *bboxes, relationship_name = labels
-        obj_id_1 = torch.tensor(self.label_name_to_id[obj_1])
-        obj_id_2 = torch.tensor(self.label_name_to_id[obj_2])
+        subj_label_name, obj_label_name, *bboxes, relationship_name = labels
         bboxes = torch.tensor(list(map(float, bboxes)))
-        bbox_1, bbox_2 = bboxes[:4], bboxes[4:]
+        subj_bbox, obj_bbox = bboxes[:4], bboxes[4:]
+
+        subj_class = self.label_name_to_class_description[subj_label_name]
+        subj_class = subj_class.replace(' ', '')
+        subj_class = subj_class.lower()
+
+        obj_class = self.label_name_to_class_description[obj_label_name]
+        obj_class = obj_class.replace(' ', '')
+        obj_class = obj_class.replace('(madeof)', '')
+        obj_class = obj_class.lower()
+
         relationship_id = self.relationship_names_to_id[relationship_name]
         relationship_id = torch.tensor(relationship_id)
-        return (obj_id_1, obj_id_2, bbox_1, bbox_2, relationship_id)
+
+        labels = (
+            subj_class,
+            subj_bbox,
+            obj_class,
+            obj_bbox,
+            relationship_name,
+            relationship_id,
+        )
+        return labels
+
+    def prep_images(self, image, labels):
+        # TODO: crop images using PIL instead
+        h, w = image.shape[:2]
+
+        bbox_sub = (labels[1] * torch.tensor([w, w, h, h])).int()
+        sub = image[
+            bbox_sub[2]:bbox_sub[3],
+            bbox_sub[0]:bbox_sub[1],
+        ]
+
+        bbox_obj = (labels[3] * torch.tensor([w, w, h, h])).int()
+        obj = image[
+            bbox_obj[2]:bbox_obj[3],
+            bbox_obj[0]:bbox_obj[1],
+        ]
+
+        bbox_comb = [
+            min(bbox_sub[0], bbox_obj[0]),
+            max(bbox_sub[1], bbox_obj[1]),
+            min(bbox_sub[2], bbox_obj[2]),
+            max(bbox_sub[3], bbox_obj[3]),
+        ]
+        comb = image[
+            bbox_comb[2]:bbox_comb[3],
+            bbox_comb[0]:bbox_comb[1],
+        ]
+
+        # print(sub.shape, obj.shape, comb.shape, image.shape, labels, sep=" | ")
+        subj = Image.fromarray(sub)
+        obj = Image.fromarray(obj)
+        comb = Image.fromarray(comb)
+
+        crops = (subj, obj, comb)
+        return crops
 
     def prep_images(self, image, labels):
         # TODO: crop images using PIL to avoid conversion to np.ndarray
@@ -372,11 +433,16 @@ class Relationships(Dataset):
         if self.transform:
             crops = tuple(self.transform(x) for x in crops)
 
-        return crops, (labels[0], labels[1], labels[-1])
+        return crops, labels
+
+
+def main():
+    a = ImageAndRelationships(Path("/C/nei/open-images"), split="test")
+    print([a[i] for i in range(10)])
+    a = Relationships(Path("/C/nei/open-images/"), split="test")
+    print(a.label_name_to_class_description["/m/083vt"])
+    print([a[i] for i in range(10)])
 
 
 if __name__ == "__main__":
-    a = ImageAndRelationships(Path("../../open-images"), split="test")
-    print([a[i] for i in range(10)])
-    a = Relationships(Path("../../open-images"), split="test")
-    print([a[i] for i in range(10)])
+    main()
