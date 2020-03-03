@@ -30,6 +30,11 @@ def read_file(file_path: Path) -> str:
         return text_file.read()
 
 
+def invert_mapping(mapping) -> Dict:
+    """Naively convert key to value mapping to value to key dict."""
+    return {v: k for k, v in mapping.items()}
+
+
 def read_multiline(file_path: Path) -> List[str]:
     """Read, split by LF, and pop final empty line if present."""
     text = read_file(file_path)
